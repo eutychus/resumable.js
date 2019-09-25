@@ -116,7 +116,7 @@
       }
     };
     $.indexOf = function(array, obj) {
-    	if (array.indexOf) { return array.indexOf(obj); }     
+    	if (array.indexOf) { return array.indexOf(obj); }
     	for (var i = 0; i < array.length; i++) {
             if (array[i] === obj) { return i; }
         }
@@ -198,7 +198,7 @@
           return (size/1024.0/1024.0/1024.0).toFixed(1) + ' GB';
         }
       },
-      getTarget:function(request, params){
+      getTarget:function(request, params, obj){
         var target = $.getOpt('target');
 
         if (request === 'test' && $.getOpt('testTarget')) {
@@ -206,7 +206,7 @@
         }
 
         if (typeof target === 'function') {
-          return target(params);
+          return target(params, obj);
         }
 
         var separator = target.indexOf('?') < 0 ? '?' : '&';
@@ -631,6 +631,7 @@
             case 2: break;
             }
           }
+          $.preprocessState = 3;
           $h.each($.chunks, function (chunk) {
             if (chunk.status() == 'pending' && chunk.preprocessState !== 1) {
               chunk.send();
@@ -673,6 +674,7 @@
       $.pendingRetry = false;
       $.preprocessState = 0; // 0 = unprocessed, 1 = processing, 2 = finished
       $.markComplete = false;
+      $.includeQuery = false;
 
       // Computed properties
       var chunkSize = $.getOpt('chunkSize');
@@ -739,7 +741,7 @@
           })
         );
         // Append the relevant chunk and send it
-        $.xhr.open($.getOpt('testMethod'), $h.getTarget('test', params));
+        $.xhr.open($.getOpt('testMethod'), $h.getTarget('test', params, $));
         $.xhr.timeout = $.getOpt('xhrTimeout');
         $.xhr.withCredentials = $.getOpt('withCredentials');
         // Add data from header options
@@ -760,6 +762,16 @@
 
       // send() uploads the actual data in a POST call
       $.send = function(){
+        // prevent testing / sending until preprocessFile is complete
+        if(fileObj.preprocessState < 2) {
+          if(fileObj.preprocessState == 0) {
+            var preprocessFile = $.getOpt('preprocess');
+            fileObj.upload();
+            return;
+          }
+          return;
+        }
+
         var preprocess = $.getOpt('preprocess');
         if(typeof preprocess === 'function') {
           switch($.preprocessState) {
@@ -812,7 +824,8 @@
         $.xhr.addEventListener('timeout', doneHandler, false);
 
         // Set up the basic query data from Resumable
-        var query = [
+        if($.includeQuery == false) var query = [];
+        else var query = [
           ['chunkNumberParameterName', $.offset + 1],
           ['chunkSizeParameterName', $.getOpt('chunkSize')],
           ['currentChunkSizeParameterName', $.endByte - $.startByte],
@@ -845,33 +858,34 @@
         var params = [];
 
         var parameterNamespace = $.getOpt('parameterNamespace');
-                if ($.getOpt('method') === 'octet') {
-                    // Add data from the query options
-                    data = bytes;
-                    $h.each(query, function (k, v) {
-                        params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
-                    });
-                } else {
-                    // Add data from the query options
-                    data = new FormData();
-                    $h.each(query, function (k, v) {
-                        data.append(parameterNamespace + k, v);
-                        params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
-                    });
-                    if ($.getOpt('chunkFormat') == 'blob') {
-                        data.append(parameterNamespace + $.getOpt('fileParameterName'), bytes, $.fileObj.fileName);
-                    }
-                    else if ($.getOpt('chunkFormat') == 'base64') {
-                        var fr = new FileReader();
-                        fr.onload = function (e) {
-                            data.append(parameterNamespace + $.getOpt('fileParameterName'), fr.result);
-                            $.xhr.send(data);
-                        }
-                        fr.readAsDataURL(bytes);
-                    }
-                }
 
-        var target = $h.getTarget('upload', params);
+        if ($.getOpt('method') === 'octet') {
+            // Add data from the query options
+            data = bytes;
+            $h.each(query, function (k, v) {
+                params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
+            });
+        } else {
+            // Add data from the query options
+            data = new FormData();
+            $h.each(query, function (k, v) {
+                data.append(parameterNamespace + k, v);
+                params.push([encodeURIComponent(parameterNamespace + k), encodeURIComponent(v)].join('='));
+            });
+            if ($.getOpt('chunkFormat') == 'blob') {
+                data.append(parameterNamespace + $.getOpt('fileParameterName'), bytes, $.fileObj.fileName);
+            }
+            else if ($.getOpt('chunkFormat') == 'base64') {
+                var fr = new FileReader();
+                fr.onload = function (e) {
+                    data.append(parameterNamespace + $.getOpt('fileParameterName'), fr.result);
+                    $.xhr.send(data);
+                }
+                fr.readAsDataURL(bytes);
+            }
+        }
+
+        var target = $h.getTarget('upload', params, $);
         var method = $.getOpt('uploadMethod');
 
         $.xhr.open(method, target);
